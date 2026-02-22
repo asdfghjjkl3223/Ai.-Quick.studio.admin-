@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Quick Studio - Secure Admin</title>
+    <title>AI Quick Studio - Super Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
     
@@ -27,20 +27,24 @@
         const provider = new GoogleAuthProvider();
 
         // ==========================================
-        // 🔴🔴🔴 STRICT ADMIN SECURITY LOCK 🔴🔴🔴
+        // 🔴 STRICT ADMIN SECURITY LOCK
         // ==========================================
         const ALLOWED_ADMIN_EMAILS = [
-            "neeraj14soni78@gmail.com"
+            "neeraj14soni78@gmail.com" // Aapki ID
         ];
         // ==========================================
 
         setPersistence(auth, browserLocalPersistence).catch(err => console.error(err));
 
         let usersData = [];
+        let filteredUsers = [];
         let pendingRequests = [];
         let totalRevenue = 0;
+        let qrCodeBase64 = "";
 
-        // UI Helpers
+        // ===========================
+        // UI HELPERS
+        // ===========================
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.nav-btn').forEach(el => {
@@ -61,73 +65,99 @@
             const input = document.getElementById(inputId);
             const icon = document.getElementById('eye-' + inputId);
             if (input.type === 'password') {
-                input.type = 'text';
-                icon.setAttribute('data-lucide', 'eye-off');
+                input.type = 'text'; icon.setAttribute('data-lucide', 'eye-off');
             } else {
-                input.type = 'password';
-                icon.setAttribute('data-lucide', 'eye');
+                input.type = 'password'; icon.setAttribute('data-lucide', 'eye');
             }
             lucide.createIcons();
         };
 
-        // Secure Login Logic
+        // ===========================
+        // AUTHENTICATION
+        // ===========================
         window.loginAdmin = async () => {
             const btn = document.getElementById('login-btn');
             btn.innerHTML = "Verifying Identity...";
             try {
                 const result = await signInWithPopup(auth, provider);
-                const email = result.user.email;
-                
-                // FINAL SECURITY CHECK
-                if (!ALLOWED_ADMIN_EMAILS.includes(email)) {
-                    alert("⛔ ACCESS DENIED! You are not authorized to access this panel.");
+                if (!ALLOWED_ADMIN_EMAILS.includes(result.user.email)) {
+                    alert("⛔ ACCESS DENIED! You are not authorized.");
                     await signOut(auth);
                     btn.innerHTML = "Secure System Login";
                     return;
                 }
-            } catch (e) { 
-                alert("Login Error: " + e.message); 
-                btn.innerHTML = "Secure System Login"; 
+            } catch (e) { alert("Login Error: " + e.message); btn.innerHTML = "Secure System Login"; }
+        };
+        window.logoutAdmin = () => { if(confirm("Disconnect from Admin Panel?")) signOut(auth); };
+
+        // ===========================
+        // SETTINGS & QR UPLOAD LOGIC
+        // ===========================
+        window.handleQRUpload = (event) => {
+            const file = event.target.files[0];
+            if(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    qrCodeBase64 = e.target.result;
+                    document.getElementById('qr-preview').src = qrCodeBase64;
+                    document.getElementById('qr-preview').classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
             }
         };
 
-        window.logoutAdmin = () => { if(confirm("Disconnect from Admin Panel?")) signOut(auth); };
-
-        // Save Global Settings
         window.saveSettings = async () => {
             const apiKey = document.getElementById('api-key-input').value;
             const hfKey = document.getElementById('hf-key-input').value;
             const prompt = document.getElementById('base-prompt-input').value;
+            const whatsapp = document.getElementById('whatsapp-input').value;
             const btn = document.getElementById('btn-save-settings');
             
-            btn.innerHTML = "Saving..."; btn.disabled = true;
+            btn.innerHTML = "Saving to Server..."; btn.disabled = true;
             try {
                 await setDoc(doc(db, 'admin_settings', 'global'), {
-                    main_api_key: apiKey, hf_api_key: hfKey, base_character_prompt: prompt, last_updated: new Date().toISOString()
+                    main_api_key: apiKey, 
+                    hf_api_key: hfKey, 
+                    base_character_prompt: prompt,
+                    whatsapp_number: whatsapp,
+                    qr_code_image: qrCodeBase64,
+                    last_updated: new Date().toISOString()
                 }, { merge: true });
                 alert("✅ System Configuration Updated Successfully!");
             } catch(e) { alert("Error: " + e.message); }
             btn.innerHTML = "Update System Settings"; btn.disabled = false;
         };
 
-        // Database Listeners
+        // ===========================
+        // DATABASE LISTENERS
+        // ===========================
         const startListeners = () => {
+            // Fetch Global Settings
             onSnapshot(doc(db, 'admin_settings', 'global'), (docSnap) => {
                 if(docSnap.exists()) {
                     const data = docSnap.data();
                     document.getElementById('api-key-input').value = data.main_api_key || '';
                     document.getElementById('hf-key-input').value = data.hf_api_key || '';
                     document.getElementById('base-prompt-input').value = data.base_character_prompt || 'yah wala character';
+                    document.getElementById('whatsapp-input').value = data.whatsapp_number || '';
+                    if(data.qr_code_image) {
+                        qrCodeBase64 = data.qr_code_image;
+                        document.getElementById('qr-preview').src = qrCodeBase64;
+                        document.getElementById('qr-preview').classList.remove('hidden');
+                    }
                 }
             });
 
+            // Fetch Users
             onSnapshot(collection(db, 'users'), (snapshot) => {
                 usersData = [];
                 snapshot.forEach(doc => usersData.push({ id: doc.id, ...doc.data() }));
+                filteredUsers = [...usersData]; // For search
                 document.getElementById('total-users').innerText = usersData.length;
                 window.renderUsers();
             });
 
+            // Fetch UPI Requests
             onSnapshot(collection(db, 'upi_requests'), (snapshot) => {
                 pendingRequests = []; totalRevenue = 0;
                 snapshot.forEach(doc => {
@@ -141,30 +171,79 @@
             });
         };
 
-        // UI Renderers
+        // ===========================
+        // USER CRM LOGIC (Search & Credits)
+        // ===========================
+        window.filterUsers = () => {
+            const query = document.getElementById('search-user-input').value.toLowerCase();
+            filteredUsers = usersData.filter(u => u.email.toLowerCase().includes(query) || (u.name && u.name.toLowerCase().includes(query)));
+            window.renderUsers();
+        };
+
+        window.addExtraCredits = async (email) => {
+            const inputField = document.getElementById(`credit-input-${email}`);
+            const amount = parseInt(inputField.value);
+            if(!amount || amount <= 0) { alert("Please enter valid credits!"); return; }
+            if(confirm(`Add ${amount} extra credits to ${email}?`)) {
+                try {
+                    await updateDoc(doc(db, 'users', email), { credits: increment(amount) });
+                    inputField.value = "";
+                    alert(`✅ Successfully added ${amount} credits!`);
+                } catch(e) { alert("Error: " + e.message); }
+            }
+        };
+
+        window.makeVIP = async (email) => {
+            if(confirm(`👑 Give UNLIMITED VIP ACCESS to ${email}? (Sets credits to 999,999)`)) {
+                try {
+                    await updateDoc(doc(db, 'users', email), { credits: 999999, isVIP: true });
+                    alert(`👑 BOOM! ${email} is now a VIP!`);
+                } catch(e) { alert("Error: " + e.message); }
+            }
+        };
+
         window.renderUsers = () => {
             const list = document.getElementById('users-list');
-            if(usersData.length === 0) {
+            if(filteredUsers.length === 0) {
                 list.innerHTML = "<div class='p-8 text-center text-gray-600 border border-dashed border-gray-800 rounded-3xl'>No users found.</div>";
                 return;
             }
             let htmlString = "";
-            usersData.forEach(u => {
+            filteredUsers.forEach(u => {
                 let initial = u.name ? u.name.charAt(0).toUpperCase() : 'U';
                 let credits = u.credits || 0;
-                htmlString += "<div class='p-4 bg-gray-900 border border-gray-800 rounded-2xl mb-3 flex justify-between items-center hover:border-indigo-500 hover:border-opacity-30 transition-all'>" +
-                    "<div class='flex items-center gap-3'>" +
-                        "<div class='w-10 h-10 bg-indigo-500 bg-opacity-10 rounded-xl flex items-center justify-center text-indigo-400 font-bold border border-indigo-500 border-opacity-20'>" + initial + "</div>" +
-                        "<div><p class='font-bold text-sm text-white'>" + (u.name || 'Unknown User') + "</p><p class='text-[10px] text-gray-500 font-mono'>" + u.email + "</p></div>" +
-                    "</div>" +
-                    "<div class='bg-black bg-opacity-50 px-3 py-1.5 rounded-lg border border-gray-800 text-right'>" +
-                        "<p class='text-[8px] text-gray-500 uppercase tracking-widest mb-0.5'>Power</p><p class='font-mono text-sm text-green-400 font-bold'>" + credits + " Cr</p>" +
-                    "</div>" +
-                "</div>";
+                let vipBadge = u.isVIP || credits > 900000 ? `<span class='ml-2 text-[10px] bg-yellow-500 text-black px-2 py-0.5 rounded-full font-bold'>VIP</span>` : "";
+                
+                htmlString += `
+                <div class='p-4 bg-gray-900 border border-gray-800 rounded-2xl mb-4 hover:border-indigo-500 hover:border-opacity-30 transition-all'>
+                    <div class='flex justify-between items-start mb-3'>
+                        <div class='flex items-center gap-3'>
+                            <div class='w-10 h-10 bg-indigo-500 bg-opacity-10 rounded-xl flex items-center justify-center text-indigo-400 font-bold border border-indigo-500 border-opacity-20'>${initial}</div>
+                            <div>
+                                <p class='font-bold text-sm text-white'>${u.name || 'Unknown User'} ${vipBadge}</p>
+                                <p class='text-[10px] text-gray-500 font-mono'>${u.email}</p>
+                            </div>
+                        </div>
+                        <div class='text-right'>
+                            <p class='text-[8px] text-gray-500 uppercase tracking-widest mb-0.5'>Power</p>
+                            <p class='font-mono text-sm text-green-400 font-bold'>${credits} Cr</p>
+                        </div>
+                    </div>
+                    
+                    <div class='flex gap-2 items-center bg-black bg-opacity-50 p-2 rounded-xl'>
+                        <input type="number" id="credit-input-${u.email}" placeholder="+ Cr" class="w-20 bg-gray-900 text-white text-xs p-2 rounded-lg border border-gray-700 outline-none">
+                        <button onclick="window.addExtraCredits('${u.email}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-all">Add</button>
+                        <button onclick="window.makeVIP('${u.email}')" class="ml-auto bg-yellow-500 bg-opacity-10 text-yellow-500 border border-yellow-500 border-opacity-20 hover:bg-opacity-20 text-xs font-bold px-3 py-2 rounded-lg transition-all flex items-center gap-1"><i data-lucide="crown" class="w-3 h-3"></i> VIP</button>
+                    </div>
+                </div>`;
             });
             list.innerHTML = htmlString;
+            lucide.createIcons();
         };
 
+        // ===========================
+        // FINANCE ACTIONS
+        // ===========================
         window.renderUPI = () => {
             const list = document.getElementById('upi-list');
             if(pendingRequests.length === 0) {
@@ -173,32 +252,32 @@
             }
             let htmlString = "";
             pendingRequests.forEach(r => {
-                htmlString += "<div class='p-5 bg-gradient-to-br from-gray-900 to-black border border-indigo-500 border-opacity-30 rounded-3xl mb-4 relative overflow-hidden shadow-lg'>" +
-                    "<div class='absolute top-0 left-0 w-1 h-full bg-indigo-500'></div>" +
-                    "<div class='flex justify-between items-start mb-4'>" +
-                        "<div><h4 class='font-black text-xl text-white'>₹" + r.amount + " <span class='text-xs font-normal text-gray-500'>Recharge</span></h4><p class='text-[10px] text-gray-400 font-mono mt-1'>" + r.userEmail + "</p></div>" +
-                        "<span class='bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-20 text-yellow-500 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest animate-pulse'>Pending</span>" +
-                    "</div>" +
-                    "<div class='bg-black p-4 rounded-2xl border border-gray-800 mb-5'>" +
-                        "<p class='text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1'>Transaction ID (UTR)</p><p class='font-mono text-sm text-indigo-400 select-all'>" + r.trxId + "</p>" +
-                    "</div>" +
-                    "<div class='flex gap-3'>" +
-                        "<button onclick=\"window.approvePayment('" + r.id + "', '" + r.userEmail + "', '" + r.amount + "')\" class='flex-1 bg-green-500 bg-opacity-20 hover:bg-opacity-30 text-green-400 font-bold py-3.5 rounded-xl text-sm border border-green-500 border-opacity-30 transition-all'>Approve</button>" +
-                        "<button onclick=\"window.rejectPayment('" + r.id + "')\" class='flex-1 bg-red-500 bg-opacity-10 hover:bg-opacity-20 text-red-500 font-bold py-3.5 rounded-xl text-sm border border-red-500 border-opacity-20 transition-all'>Reject</button>" +
-                    "</div>" +
-                "</div>";
+                htmlString += `
+                <div class='p-5 bg-gradient-to-br from-gray-900 to-black border border-indigo-500 border-opacity-30 rounded-3xl mb-4 relative overflow-hidden shadow-lg'>
+                    <div class='absolute top-0 left-0 w-1 h-full bg-indigo-500'></div>
+                    <div class='flex justify-between items-start mb-4'>
+                        <div><h4 class='font-black text-xl text-white'>₹${r.amount} <span class='text-xs font-normal text-gray-500'>Recharge</span></h4><p class='text-[10px] text-gray-400 font-mono mt-1'>${r.userEmail}</p></div>
+                        <span class='bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-20 text-yellow-500 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest animate-pulse'>Pending</span>
+                    </div>
+                    <div class='bg-black p-4 rounded-2xl border border-gray-800 mb-5'>
+                        <p class='text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1'>Transaction ID (UTR)</p><p class='font-mono text-sm text-indigo-400 select-all'>${r.trxId}</p>
+                    </div>
+                    <div class='flex gap-3'>
+                        <button onclick="window.approvePayment('${r.id}', '${r.userEmail}', '${r.amount}')" class='flex-1 bg-green-500 bg-opacity-20 hover:bg-opacity-30 text-green-400 font-bold py-3.5 rounded-xl text-sm border border-green-500 border-opacity-30 transition-all'>Approve</button>
+                        <button onclick="window.rejectPayment('${r.id}')" class='flex-1 bg-red-500 bg-opacity-10 hover:bg-opacity-20 text-red-500 font-bold py-3.5 rounded-xl text-sm border border-red-500 border-opacity-20 transition-all'>Reject</button>
+                    </div>
+                </div>`;
             });
             list.innerHTML = htmlString;
         };
 
-        // Actions
         window.approvePayment = async (docId, email, amount) => {
             if(!confirm("Authorize payment & transfer credits?")) return;
             let creditsToAdd = amount === '49' ? 100 : (amount === '149' ? 500 : (amount === '499' ? 2000 : 100));
             try {
                 await updateDoc(doc(db, 'upi_requests', docId), { status: 'approved' });
                 await updateDoc(doc(db, 'users', email), { credits: increment(creditsToAdd) });
-                alert("✅ Payment Approved! User received the credits.");
+                alert("✅ Payment Approved! User received credits.");
             } catch(e) { alert("Error: " + e.message); }
         };
 
@@ -209,21 +288,16 @@
             } catch(e) { alert("Error: " + e.message); }
         };
 
-        // Force check on load
+        // Init Check
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 if (!ALLOWED_ADMIN_EMAILS.includes(user.email)) {
-                    await signOut(auth);
-                    document.getElementById('auth-screen').classList.remove('hidden');
-                    document.getElementById('app-interface').classList.add('hidden');
-                    alert("⛔ Unauthorized Email!");
-                    return;
+                    await signOut(auth); return;
                 }
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('app-interface').classList.remove('hidden');
                 document.getElementById('admin-name').innerText = user.displayName.split(' ')[0];
-                startListeners();
-                lucide.createIcons();
+                startListeners(); lucide.createIcons();
             } else {
                 document.getElementById('auth-screen').classList.remove('hidden');
                 document.getElementById('app-interface').classList.add('hidden');
@@ -239,7 +313,6 @@
         .app-container { padding-bottom: 8rem; }
         ::-webkit-scrollbar { display: none; }
         input, textarea { outline: none; }
-        
         .header-fixed { position: sticky; top: 0; z-index: 80; background: rgba(2, 0, 10, 0.95); border-bottom: 1px solid rgba(255,255,255,0.05); }
         .bottom-nav { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); width: 92%; max-width: 28rem; z-index: 99; border-radius: 2rem; }
     </style>
@@ -293,6 +366,12 @@
 
             <div id="tab-users" class="tab-content hidden space-y-4">
                 <h3 class="font-black text-xl mb-4 flex items-center gap-2 text-white"><i data-lucide="users" class="w-5 h-5 text-indigo-500"></i> Client CRM</h3>
+                
+                <div class="relative mb-4">
+                    <i data-lucide="search" class="absolute left-4 top-4 w-5 h-5 text-gray-500"></i>
+                    <input type="text" id="search-user-input" onkeyup="window.filterUsers()" placeholder="Search by email or name..." class="w-full bg-gray-900 rounded-xl p-4 pl-12 text-sm border border-gray-800 focus:border-indigo-500 text-white outline-none">
+                </div>
+
                 <div id="users-list" class="space-y-3"></div>
             </div>
 
@@ -310,15 +389,36 @@
                 
                 <div class="glass p-6 rounded-[2rem] border border-purple-500/20 bg-gradient-to-b from-purple-500/5 to-transparent">
                     
+                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-4 border-b border-gray-800 pb-2">Business Contact</p>
+                    
+                    <div class="mb-5">
+                        <label class="text-[10px] font-bold text-green-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                            <i data-lucide="message-circle" class="w-3 h-3"></i> WhatsApp Support Number
+                        </label>
+                        <input type="number" id="whatsapp-input" class="w-full bg-black/60 rounded-xl p-4 text-sm border border-gray-800 focus:border-green-500 text-white font-mono" placeholder="91XXXXXXXXXX">
+                    </div>
+
+                    <div class="mb-6">
+                        <label class="text-[10px] font-bold text-yellow-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                            <i data-lucide="qr-code" class="w-3 h-3"></i> Payment QR Code Image
+                        </label>
+                        <div class="relative border-2 border-dashed border-gray-800 rounded-xl p-4 text-center hover:border-yellow-500 transition-all bg-black">
+                            <input type="file" id="qr-upload" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="window.handleQRUpload(event)">
+                            <i data-lucide="image-plus" class="w-6 h-6 text-gray-500 mx-auto mb-2"></i>
+                            <p class="text-xs text-gray-400 font-bold">Tap to upload QR Code</p>
+                            <img id="qr-preview" src="" class="hidden mx-auto mt-4 max-h-32 rounded-lg border border-gray-700 shadow-lg">
+                        </div>
+                    </div>
+
+                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-4 border-b border-gray-800 pb-2 pt-2">AI Engine Keys</p>
+
                     <div class="mb-5">
                         <label class="text-[10px] font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-2">
                             <i data-lucide="key" class="w-3 h-3"></i> Master API Key (Gemini)
                         </label>
                         <div class="relative">
                             <input type="password" id="api-key-input" class="w-full bg-black/60 rounded-xl p-4 pr-12 text-sm border border-gray-800 focus:border-purple-500 text-white font-mono" placeholder="sk-...">
-                            <button onclick="window.toggleVisibility('api-key-input')" class="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors">
-                                <i data-lucide="eye" id="eye-api-key-input" class="w-5 h-5"></i>
-                            </button>
+                            <button onclick="window.toggleVisibility('api-key-input')" class="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors"><i data-lucide="eye" id="eye-api-key-input" class="w-5 h-5"></i></button>
                         </div>
                     </div>
 
@@ -328,9 +428,7 @@
                         </label>
                         <div class="relative">
                             <input type="password" id="hf-key-input" class="w-full bg-black/60 rounded-xl p-4 pr-12 text-sm border border-gray-800 focus:border-blue-500 text-white font-mono" placeholder="hf_...">
-                            <button onclick="window.toggleVisibility('hf-key-input')" class="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors">
-                                <i data-lucide="eye" id="eye-hf-key-input" class="w-5 h-5"></i>
-                            </button>
+                            <button onclick="window.toggleVisibility('hf-key-input')" class="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors"><i data-lucide="eye" id="eye-hf-key-input" class="w-5 h-5"></i></button>
                         </div>
                     </div>
 
@@ -350,23 +448,13 @@
         </div>
 
         <nav class="bottom-nav glass flex items-center justify-evenly px-2 bg-[#02000a] bg-opacity-95 backdrop-blur-2xl border border-gray-800 shadow-[0_20px_50px_rgba(0,0,0,0.9)]">
-            <button id="nav-tab-dashboard" onclick="window.switchTab('tab-dashboard')" class="nav-btn text-indigo-400 bg-indigo-500 bg-opacity-10 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all">
-                <i data-lucide="layout-dashboard" class="w-5 h-5 mb-1"></i>
-            </button>
-            <button id="nav-tab-users" onclick="window.switchTab('tab-users')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all">
-                <i data-lucide="users" class="w-5 h-5 mb-1"></i>
-            </button>
-            <button id="nav-tab-upi" onclick="window.switchTab('tab-upi')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all relative">
-                <i data-lucide="banknote" class="w-5 h-5 mb-1"></i>
-            </button>
-            <button id="nav-tab-settings" onclick="window.switchTab('tab-settings')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all">
-                <i data-lucide="settings-2" class="w-5 h-5 mb-1"></i>
-            </button>
+            <button id="nav-tab-dashboard" onclick="window.switchTab('tab-dashboard')" class="nav-btn text-indigo-400 bg-indigo-500 bg-opacity-10 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all"><i data-lucide="layout-dashboard" class="w-5 h-5 mb-1"></i></button>
+            <button id="nav-tab-users" onclick="window.switchTab('tab-users')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all"><i data-lucide="users" class="w-5 h-5 mb-1"></i></button>
+            <button id="nav-tab-upi" onclick="window.switchTab('tab-upi')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all relative"><i data-lucide="banknote" class="w-5 h-5 mb-1"></i></button>
+            <button id="nav-tab-settings" onclick="window.switchTab('tab-settings')" class="nav-btn text-gray-500 w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all"><i data-lucide="settings-2" class="w-5 h-5 mb-1"></i></button>
         </nav>
     </div>
 
-    <script>
-        window.addEventListener('load', () => lucide.createIcons());
-    </script>
+    <script>window.addEventListener('load', () => lucide.createIcons());</script>
 </body>
 </html>
